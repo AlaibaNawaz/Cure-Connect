@@ -71,6 +71,17 @@ function App() {
                   </ProtectedRoute>
                 } 
               />
+              
+              {/* Add the doctor profile route */}
+              <Route 
+                path="/doctor-profile" 
+                element={
+                  <ProtectedRoute userType="doctor">
+                    <DoctorProfile />
+                  </ProtectedRoute>
+                } 
+              />
+              
               <Route 
                 path="/book-appointment/:doctorId" 
                 element={
