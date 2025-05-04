@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { User, Check, X, Edit, Search, MoreHorizontal, MapPin, Trash2 } from 'lucide-react';
 import * as api from '../../services/api';
 import { toast } from '../../components/ui/use-toast';
-import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
+
 
 function DoctorManagement({ token }) {
   const [doctors, setDoctors] = useState([]);
