@@ -1,7 +1,7 @@
-
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { User, Mail, Lock, Calendar, Upload } from 'lucide-react';
+import { registerUser } from '../services/api';
 
 function PatientSignup() {
   const [formData, setFormData] = useState({
@@ -13,7 +13,8 @@ function PatientSignup() {
     gender: '',
     phoneNumber: '',
     address: '',
-    profileImage: null,
+    profileImage: null, // Stores the File object
+    // profileImageBase64: '', // Remove Base64 state
     medicalHistory: ''
   });
   
@@ -28,10 +29,29 @@ function PatientSignup() {
   
   const handleImageChange = (e) => {
     if (e.target.files && e.target.files[0]) {
-      setFormData({
-        ...formData,
-        profileImage: e.target.files[0]
+      const file = e.target.files[0];
+      if (!file.type.match(/image\/(jpeg|png|gif)/)) { // Allow gif as well
+        setErrors({ profileImage: 'Only JPEG, PNG, or GIF images are allowed' });
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        setErrors({ profileImage: 'Image size must be less than 5MB' });
+        return;
+      }
+
+      // Store the File object directly
+      setFormData({ 
+        ...formData, 
+        profileImage: file // Store the File object
       });
+      setErrors({ ...errors, profileImage: null });
+
+      // Optional: Create a preview URL if needed for UI
+      // const reader = new FileReader();
+      // reader.onload = () => {
+      //   // setProfileImagePreview(reader.result); // Example state for preview
+      // };
+      // reader.readAsDataURL(file);
     }
   };
   
@@ -57,13 +77,23 @@ function PatientSignup() {
     const newErrors = {};
     
     if (!formData.dateOfBirth) newErrors.dateOfBirth = 'Date of birth is required';
+    else {
+      const dob = new Date(formData.dateOfBirth);
+      const today = new Date();
+      if (dob > today) newErrors.dateOfBirth = 'Date of birth cannot be in the future';
+    }
     if (!formData.gender) newErrors.gender = 'Gender is required';
+    if (!formData.phoneNumber) newErrors.phoneNumber = 'Phone number is required';
+    else if (!/^\d{11}$/.test(formData.phoneNumber.replace(/\D/g, ''))) newErrors.phoneNumber = 'Phone number must be 11 digits';
+    
+    if (!formData.address) newErrors.address = 'Address is required';
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
   
-  const nextStep = () => {
+  const nextStep = (e) => {
+    e.preventDefault(); // Prevent form submission during navigation
     if (step === 1) {
       if (validateStep1()) setStep(2);
     } else if (step === 2) {
@@ -71,18 +101,55 @@ function PatientSignup() {
     }
   };
   
-  const prevStep = () => {
+  const prevStep = (e) => {
+    e.preventDefault(); // Prevent form submission
     setStep(step - 1);
   };
   
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // In a real app, you would send this data to your backend
-    console.log('Form data submitted:', formData);
+    // Only proceed with submission if on Step 3
+    if (step !== 3) return;
     
-    // Mock successful registration
-    navigate('/login', { state: { message: 'Registration successful! Please login with your credentials.', userType: 'patient' } });
+    // Re-validate steps just in case
+    if (!validateStep1() || !validateStep2()) {
+      // Optionally set step back or show a general error
+      setErrors({ submit: 'Please complete all required fields correctly.' });
+      setStep(1); // Go back to the first step with errors
+      return;
+    }
+    
+    // Prepare FormData payload
+    const dataToSubmit = new FormData();
+    dataToSubmit.append('name', formData.fullName);
+    dataToSubmit.append('email', formData.email);
+    dataToSubmit.append('password', formData.password);
+    dataToSubmit.append('dateOfBirth', formData.dateOfBirth);
+    dataToSubmit.append('gender', formData.gender);
+    dataToSubmit.append('phoneNumber', formData.phoneNumber);
+    dataToSubmit.append('address', formData.address);
+    dataToSubmit.append('medicalHistory', formData.medicalHistory || '');
+    
+    // Append the profile image file if it exists
+    if (formData.profileImage) {
+      dataToSubmit.append('profileImage', formData.profileImage);
+    }
+    
+    try {
+      // Pass FormData to registerUser
+      const response = await registerUser(dataToSubmit, 'patient'); 
+      console.log('Registration successful:', response);
+      navigate('/login', { 
+        state: { 
+          message: 'Registration successful! Please login with your credentials.', 
+          userType: 'patient' 
+        } 
+      });
+    } catch (error) {
+      console.error('Registration failed:', error.message);
+      setErrors({ submit: error.message || 'Registration failed. Please try again.' });
+    }
   };
   
   return (
@@ -93,6 +160,12 @@ function PatientSignup() {
             <h2 className="text-3xl font-bold text-gray-900">Patient Registration</h2>
             <p className="mt-2 text-gray-600">Join our healthcare platform</p>
           </div>
+          
+          {errors.submit && (
+            <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-400">
+              <p className="text-sm text-red-700">{errors.submit}</p>
+            </div>
+          )}
           
           <div className="mb-8">
             <div className="flex items-center justify-between">
@@ -262,7 +335,7 @@ function PatientSignup() {
                 </div>
                 
                 <div>
-                  <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700">Phone Number (Optional)</label>
+                  <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700">Phone Number</label>
                   <div className="mt-1">
                     <input
                       type="tel"
@@ -270,14 +343,15 @@ function PatientSignup() {
                       name="phoneNumber"
                       value={formData.phoneNumber}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      className={`block w-full px-3 py-2 border ${errors.phoneNumber ? 'border-red-500' : 'border-gray-300'} rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500`}
                       placeholder="(123) 456-7890"
                     />
                   </div>
+                  {errors.phoneNumber && <p className="mt-2 text-sm text-red-600">{errors.phoneNumber}</p>}
                 </div>
                 
                 <div>
-                  <label htmlFor="address" className="block text-sm font-medium text-gray-700">Address (Optional)</label>
+                  <label htmlFor="address" className="block text-sm font-medium text-gray-700">Address</label>
                   <div className="mt-1">
                     <input
                       type="text"
@@ -285,14 +359,15 @@ function PatientSignup() {
                       name="address"
                       value={formData.address}
                       onChange={handleChange}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      className={`block w-full px-3 py-2 border ${errors.address ? 'border-red-500' : 'border-gray-300'} rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500`}
                       placeholder="123 Main St, City, State, ZIP"
                     />
                   </div>
+                  {errors.address && <p className="mt-2 text-sm text-red-600">{errors.address}</p>}
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Profile Picture (Optional)</label>
+                  <label className="block text-sm font-medium text-gray-700">Profile Picture</label>
                   <div className="mt-1 flex items-center">
                     <span className="inline-block h-12 w-12 rounded-full overflow-hidden bg-gray-100">
                       {formData.profileImage ? (
@@ -320,6 +395,7 @@ function PatientSignup() {
                       onChange={handleImageChange}
                     />
                   </div>
+                  {errors.profileImage && <p className="mt-2 text-sm text-red-600">{errors.profileImage}</p>}
                 </div>
                 
                 <div>
@@ -355,8 +431,8 @@ function PatientSignup() {
                     
                     <div>
                       <h4 className="text-sm font-medium text-gray-500">Contact Information</h4>
-                      <p className="mt-1"><span className="font-medium">Phone:</span> {formData.phoneNumber || 'Not provided'}</p>
-                      <p><span className="font-medium">Address:</span> {formData.address || 'Not provided'}</p>
+                      <p className="mt-1"><span className="font-medium">Phone:</span> {formData.phoneNumber}</p>
+                      <p><span className="font-medium">Address:</span> {formData.address}</p>
                     </div>
                   </div>
                   
@@ -364,6 +440,17 @@ function PatientSignup() {
                     <div className="mt-4">
                       <h4 className="text-sm font-medium text-gray-500">Medical History</h4>
                       <p className="mt-1 text-sm text-gray-600">{formData.medicalHistory}</p>
+                    </div>
+                  )}
+                  
+                  {formData.profileImage && (
+                    <div className="mt-4">
+                      <h4 className="text-sm font-medium text-gray-500">Profile Picture</h4>
+                      <img
+                        src={URL.createObjectURL(formData.profileImage)}
+                        alt="Profile preview"
+                        className="mt-1 h-20 w-20 rounded-full object-cover"
+                      />
                     </div>
                   )}
                 </div>

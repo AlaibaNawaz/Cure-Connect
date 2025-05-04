@@ -1,105 +1,157 @@
-
-import React, { useState } from 'react';
-import { Calendar, Search, FileText, User, Star, Download, Upload, Clock } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Calendar, FileText, User, Download, Upload, Trash2, Save } from 'lucide-react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { toast } from '../components/ui/use-toast';
+import * as api from '../services/api';
+import { downloadReport } from '../services/api';
+import AppointmentManagement from './AppointmentManagement';
+import PatientPrescriptionManagement from './PatientPrescriptionManagement';
 
 function PatientDashboard() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [activeTab, setActiveTab] = useState('appointments');
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // State for real data
+  const [upcomingAppointments, setUpcomingAppointments] = useState([]);
+  const [pastAppointments, setPastAppointments] = useState([]);
+  const [medicalReports, setMedicalReports] = useState([]);
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedFileName, setSelectedFileName] = useState('');
+  
+  // State for patient profile
+  const [patientProfile, setPatientProfile] = useState(null);
+  const [profileFormData, setProfileFormData] = useState({
+    name: '',
+    phoneNumber: '',
+    dateOfBirth: '',
+    gender: '',
+    address: '',
+    medicalHistory: '',
+    bloodGroup: '',
+    allergies: [],
+    emergencyContact: {
+      name: '',
+      relationship: '',
+      phoneNumber: ''
+    },
+    profileImage: ''
+  });
+  const [selectedProfileImage, setSelectedProfileImage] = useState(null);
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
 
-  // Sample data for UI demonstration
-  const upcomingAppointments = [
-    {
-      id: 1,
-      doctorName: "Dr. Sarah Johnson",
-      doctorSpecialization: "Cardiologist",
-      date: "May 15, 2025",
-      time: "10:00 AM",
-      status: "confirmed",
-      image: "https://randomuser.me/api/portraits/women/45.jpg"
-    },
-    {
-      id: 2,
-      doctorName: "Dr. Michael Chen",
-      doctorSpecialization: "Dermatologist",
-      date: "May 20, 2025",
-      time: "2:30 PM",
-      status: "pending",
-      image: "https://randomuser.me/api/portraits/men/32.jpg"
+  // Show success message if redirected from appointment booking
+  useEffect(() => {
+    if (location.state?.message) {
+      toast({
+        title: "Success",
+        description: location.state.message,
+      });
+      navigate(location.pathname, { replace: true });
     }
-  ];
+  }, [location]);
 
-  const pastAppointments = [
-    {
-      id: 101,
-      doctorName: "Dr. Emma Rodriguez",
-      doctorSpecialization: "Pediatrician",
-      date: "April 28, 2025",
-      time: "11:15 AM",
-      status: "completed",
-      hasReview: true,
-      rating: 5,
-      reviewText: "Dr. Rodriguez was amazing with my child. Very patient and thorough.",
-      image: "https://randomuser.me/api/portraits/women/68.jpg"
-    },
-    {
-      id: 102,
-      doctorName: "Dr. James Wilson",
-      doctorSpecialization: "Neurologist",
-      date: "April 15, 2025",
-      time: "9:00 AM",
-      status: "completed",
-      hasReview: false,
-      image: "https://randomuser.me/api/portraits/men/29.jpg"
-    }
-  ];
-
-  const medicalReports = [
-    {
-      id: 1,
-      name: "Blood Test Results",
-      date: "April 20, 2025",
-      type: "PDF",
-      size: "1.2 MB"
-    },
-    {
-      id: 2,
-      name: "Chest X-Ray",
-      date: "March 15, 2025",
-      type: "Image",
-      size: "3.8 MB"
-    },
-    {
-      id: 3,
-      name: "Medical History",
-      date: "January 10, 2025",
-      type: "PDF",
-      size: "850 KB"
-    }
-  ];
-
-  const prescriptions = [
-    {
-      id: 1,
-      doctorName: "Dr. Sarah Johnson",
-      date: "April 28, 2025",
-      medications: [
-        { name: "Amoxicillin", dosage: "500mg", frequency: "3 times a day", duration: "7 days" },
-        { name: "Ibuprofen", dosage: "400mg", frequency: "As needed", duration: "For pain" }
-      ]
-    },
-    {
-      id: 2,
-      doctorName: "Dr. James Wilson",
-      date: "April 15, 2025",
-      medications: [
-        { name: "Lisinopril", dosage: "10mg", frequency: "Once daily", duration: "30 days" },
-        { name: "Aspirin", dosage: "81mg", frequency: "Once daily", duration: "Ongoing" }
-      ]
-    }
-  ];
+  // Fetch appointments, reports, prescriptions, and patient profile when user is logged in
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!user || !user._id || !token) {
+        console.error('User or token is missing');
+        setLoading(false);
+        return;
+      }
+  
+      setLoading(true);
+      try {
+        // Fetch appointments
+        const appointmentsResponse = await api.getAppointments(token);
+        const appointmentsData = appointmentsResponse;
+  
+        // Split appointments into upcoming and past
+        const upcoming = [];
+        const past = [];
+        appointmentsData.forEach(appointment => {
+          const appointmentDate = new Date(appointment.date);
+          const today = new Date();
+          if (appointment.status === 'completed' || appointment.status === 'cancelled' || appointmentDate < today) {
+            past.push(appointment);
+          } else {
+            upcoming.push(appointment);
+          }
+        });
+        setUpcomingAppointments(upcoming);
+        setPastAppointments(past);
+  
+        // Fetch medical reports
+        try {
+          const reportsData = await api.getReports({ patientId: user._id }, token);
+          setMedicalReports(reportsData);
+        } catch (error) {
+          console.error('Failed to fetch reports:', error);
+          toast({
+            title: "Error",
+            description: error.message || "Failed to load medical reports",
+            variant: "destructive",
+          });
+        }
+  
+        // Fetch prescriptions
+        try {
+          const prescriptionsData = await api.getPrescriptions({ patientId: user._id }, token);
+          setPrescriptions(prescriptionsData);
+        } catch (error) {
+          console.error('Failed to fetch prescriptions:', error);
+          toast({
+            title: "Error",
+            description: error.message || "Failed to load prescriptions",
+            variant: "destructive",
+          });
+        }
+  
+        // Fetch patient profile
+        try {
+          const patientData = await api.getPatientById(user._id, token);
+          setPatientProfile(patientData);
+          setProfileFormData({
+            name: patientData.name || '',
+            phoneNumber: patientData.phoneNumber || '',
+            dateOfBirth: patientData.dateOfBirth ? new Date(patientData.dateOfBirth).toISOString().split('T')[0] : '',
+            gender: patientData.gender || '',
+            address: patientData.address || '',
+            medicalHistory: patientData.medicalHistory || '',
+            bloodGroup: patientData.bloodGroup || '',
+            allergies: patientData.allergies || [],
+            emergencyContact: {
+              name: patientData.emergencyContact?.name || '',
+              relationship: patientData.emergencyContact?.relationship || '',
+              phoneNumber: patientData.emergencyContact?.phoneNumber || ''
+            },
+            profileImage: `http://localhost:5000${user.profileImage || ''}`
+          });
+        } catch (error) {
+          console.error('Failed to fetch patient profile:', error);
+          toast({
+            title: "Error",
+            description: "Failed to load your profile data. Please try again later.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch data:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load your data. Please try again later.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+  
+    fetchData();
+  }, [user, token]);
 
   // If user is not logged in, show a message to login
   if (!user) {
@@ -115,33 +167,196 @@ function PatientDashboard() {
     );
   }
 
-  const handleCancelAppointment = (appointmentId) => {
-    // In a real app, this would make an API call to cancel the appointment
-    console.log(`Cancelling appointment ${appointmentId}`);
-    alert(`Appointment ${appointmentId} has been cancelled.`);
-  };
-
-  const handleRescheduleAppointment = (appointmentId) => {
-    // In a real app, this would navigate to a reschedule form
-    console.log(`Rescheduling appointment ${appointmentId}`);
-    navigate(`/reschedule-appointment/${appointmentId}`);
-  };
-
-  const handleSubmitReview = (appointmentId, rating, review) => {
-    // In a real app, this would submit the review to an API
-    console.log(`Submitting review for appointment ${appointmentId}`, { rating, review });
-    alert('Thank you for your feedback!');
-  };
-
-  const handleUploadReport = (e) => {
+  const handleUploadReport = async (e) => {
     e.preventDefault();
-    // In a real app, this would upload the file to a server
-    alert('Report uploaded successfully!');
+    const formData = new FormData(e.target);
+    
+    if (!formData.get('reportFile')) {
+      toast({
+        title: "Error",
+        description: "Please select a file to upload.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    try {
+      const newReport = await api.createReport(formData, token);
+      setMedicalReports(prev => [newReport, ...prev]);
+      e.target.reset();
+      setSelectedFileName('');
+      
+      toast({
+        title: "Report Uploaded",
+        description: "Your medical report has been uploaded successfully.",
+      });
+    } catch (error) {
+      console.error('Failed to upload report:', error);
+      toast({
+        title: "Upload Failed",
+        description: error.message || "Failed to upload report. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
+  const handleDeleteReport = async (reportId) => {
+    try {
+      await api.deleteReport(reportId, token);
+      setMedicalReports(prev => prev.filter(report => report._id !== reportId));
+      
+      toast({
+        title: "Report Deleted",
+        description: "Medical report has been deleted successfully.",
+      });
+    } catch (error) {
+      console.error('Failed to delete report:', error);
+      toast({
+        title: "Delete Failed",
+        description: error.message || "Failed to delete report. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Define handleFileChange inside the component
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedFileName(file.name);
+    }
+  };
+  
+  // Profile form handlers
+  const handleProfileInputChange = (e) => {
+    const { name, value } = e.target;
+    setProfileFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  const handleEmergencyContactChange = (e) => {
+    const { name, value } = e.target;
+    let fieldName = '';
+    
+    // Extract the actual field name from the input name
+    if (name === 'emergencyContactName') fieldName = 'name';
+    else if (name === 'emergencyContactRelationship') fieldName = 'relationship';
+    else if (name === 'emergencyContactPhoneNumber') fieldName = 'phoneNumber';
+    
+    setProfileFormData(prev => ({
+      ...prev,
+      emergencyContact: {
+        ...prev.emergencyContact,
+        [fieldName]: value
+      }
+    }));
+  };
+  
+  const handleAddAllergy = () => {
+    if (profileFormData.newAllergy && profileFormData.newAllergy.trim() !== '') {
+      setProfileFormData(prev => ({
+        ...prev,
+        allergies: [...prev.allergies, prev.newAllergy.trim()],
+        newAllergy: ''
+      }));
+    }
+  };
+  
+  const handleRemoveAllergy = (index) => {
+    setProfileFormData(prev => ({
+      ...prev,
+      allergies: prev.allergies.filter((_, i) => i !== index)
+    }));
+  };
+  
+  const handleProfileImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSelectedProfileImage(file);
+      // Create a preview URL
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfileFormData(prev => ({ ...prev, profileImage: reader.result }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!user || !token) return;
+    
+    setIsUpdatingProfile(true);
+    
+    try {
+      const formData = new FormData();
+      
+      // Add profile image if selected
+      if (selectedProfileImage) {
+        formData.append('profileImage', selectedProfileImage);
+      }
+      
+      // Add other profile data
+      const profileData = {
+        phoneNumber: profileFormData.phoneNumber,
+        dateOfBirth: profileFormData.dateOfBirth,
+        gender: profileFormData.gender,
+        address: profileFormData.address,
+        medicalHistory: profileFormData.medicalHistory,
+        bloodGroup: profileFormData.bloodGroup || null,
+        allergies: profileFormData.allergies,
+        emergencyContact: profileFormData.emergencyContact
+      };
+      
+      // Append JSON data
+      Object.keys(profileData).forEach(key => {
+        if (key === 'emergencyContact') {
+          formData.append(key, JSON.stringify(profileData[key]));
+        } else if (key === 'allergies') {
+          profileData[key].forEach((allergy, index) => {
+            formData.append(`allergies[${index}]`, allergy);
+          });
+        } else {
+          formData.append(key, profileData[key]);
+        }
+      });
+      
+      // Call API to update profile
+      const updatedProfile = await api.updatePatientProfile(user._id, formData, token);
+      
+      // Update local state
+      setPatientProfile(updatedProfile);
+      
+      toast({
+        title: "Success",
+        description: "Your profile has been updated successfully.",
+      });
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+      toast({
+        title: "Update Failed",
+        description: error.message || "Failed to update your profile. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
+  if (loading && user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
@@ -152,19 +367,18 @@ function PatientDashboard() {
                 <p className="text-sm text-gray-500">{user.email}</p>
               </div>
               <img
-                className="h-10 w-10 rounded-full"
-                src="https://randomuser.me/api/portraits/men/75.jpg"
+                className="h-10 w-10 rounded-full object-cover"
+                src={`http://localhost:5000${user.profileImage}`}
                 alt="User avatar"
+                onError={(e) => e.target.src = ''}
               />
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {/* Sidebar Navigation */}
           <div className="md:col-span-1">
             <nav className="bg-white shadow rounded-lg overflow-hidden">
               <div className="p-4 bg-blue-600 text-white">
@@ -179,15 +393,6 @@ function PatientDashboard() {
                 >
                   <Calendar className="mr-3 h-5 w-5" />
                   <span>Appointments</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('findDoctor')}
-                  className={`w-full flex items-center px-4 py-2 text-left rounded-md ${
-                    activeTab === 'findDoctor' ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  <Search className="mr-3 h-5 w-5" />
-                  <span>Find a Doctor</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('medicalRecords')}
@@ -220,310 +425,104 @@ function PatientDashboard() {
             </nav>
           </div>
 
-          {/* Main Content Area */}
           <div className="md:col-span-3">
             <div className="bg-white shadow rounded-lg p-6">
-              {/* Appointments Tab */}
               {activeTab === 'appointments' && (
                 <div>
-                  <div className="border-b border-gray-200 mb-6">
-                    <h2 className="text-xl font-semibold text-gray-800 pb-4">Your Appointments</h2>
-                  </div>
-
-                  {/* Upcoming Appointments */}
-                  <div className="mb-8">
-                    <h3 className="text-lg font-medium text-gray-700 mb-4">Upcoming Appointments</h3>
-                    {upcomingAppointments.length === 0 ? (
-                      <p className="text-gray-500">You have no upcoming appointments.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {upcomingAppointments.map((appointment) => (
-                          <div key={appointment.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center">
-                                <img
-                                  src={appointment.image}
-                                  alt={appointment.doctorName}
-                                  className="h-12 w-12 rounded-full mr-4"
-                                />
-                                <div>
-                                  <h4 className="text-md font-semibold">{appointment.doctorName}</h4>
-                                  <p className="text-sm text-gray-600">{appointment.doctorSpecialization}</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
-                                  appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                }`}>
-                                  {appointment.status === 'confirmed' ? 'Confirmed' : 'Pending'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="mt-4 grid grid-cols-2 gap-4">
-                              <div>
-                                <p className="text-sm text-gray-600">Date</p>
-                                <p className="text-sm font-medium">{appointment.date}</p>
-                              </div>
-                              <div>
-                                <p className="text-sm text-gray-600">Time</p>
-                                <p className="text-sm font-medium">{appointment.time}</p>
-                              </div>
-                            </div>
-                            <div className="mt-4 flex justify-end space-x-2">
-                              <button
-                                onClick={() => handleRescheduleAppointment(appointment.id)}
-                                className="inline-flex items-center px-3 py-1 border border-blue-300 text-sm font-medium rounded text-blue-700 bg-blue-50 hover:bg-blue-100"
-                              >
-                                <Clock className="h-4 w-4 mr-1" />
-                                Reschedule
-                              </button>
-                              <button
-                                onClick={() => handleCancelAppointment(appointment.id)}
-                                className="inline-flex items-center px-3 py-1 border border-red-300 text-sm font-medium rounded text-red-700 bg-red-50 hover:bg-red-100"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Past Appointments */}
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-700 mb-4">Past Appointments</h3>
-                    {pastAppointments.length === 0 ? (
-                      <p className="text-gray-500">You have no past appointments.</p>
-                    ) : (
-                      <div className="space-y-4">
-                        {pastAppointments.map((appointment) => (
-                          <div key={appointment.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center">
-                                <img
-                                  src={appointment.image}
-                                  alt={appointment.doctorName}
-                                  className="h-12 w-12 rounded-full mr-4"
-                                />
-                                <div>
-                                  <h4 className="text-md font-semibold">{appointment.doctorName}</h4>
-                                  <p className="text-sm text-gray-600">{appointment.doctorSpecialization}</p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <span className="inline-flex px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">
-                                  {appointment.status}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="mt-4 grid grid-cols-2 gap-4">
-                              <div>
-                                <p className="text-sm text-gray-600">Date</p>
-                                <p className="text-sm font-medium">{appointment.date}</p>
-                              </div>
-                              <div>
-                                <p className="text-sm text-gray-600">Time</p>
-                                <p className="text-sm font-medium">{appointment.time}</p>
-                              </div>
-                            </div>
-
-                            {/* Review Section */}
-                            {appointment.hasReview ? (
-                              <div className="mt-4 bg-blue-50 p-3 rounded">
-                                <p className="text-sm font-medium text-gray-700">Your Review</p>
-                                <div className="flex items-center mt-1">
-                                  {[...Array(5)].map((_, i) => (
-                                    <Star
-                                      key={i}
-                                      className={`h-4 w-4 ${i < appointment.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'}`}
-                                    />
-                                  ))}
-                                </div>
-                                <p className="text-sm text-gray-600 mt-1">{appointment.reviewText}</p>
-                              </div>
-                            ) : (
-                              <div className="mt-4">
-                                <button 
-                                  className="inline-flex items-center px-3 py-1 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100"
-                                  onClick={() => {
-                                    // In a real app, this would open a review form
-                                    const rating = prompt('Rate your experience from 1-5');
-                                    const review = prompt('Write your review');
-                                    if (rating && review) {
-                                      handleSubmitReview(appointment.id, parseInt(rating), review);
-                                    }
-                                  }}
-                                >
-                                  <Star className="h-4 w-4 mr-1" />
-                                  Leave a Review
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-6 text-center">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold mb-0">Your Appointments</h2>
                     <Link
-                      to="/find-doctor"
-                      className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                      to="/doctor-list"
+                      className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors duration-200"
                     >
                       Book a New Appointment
                     </Link>
                   </div>
+                  <AppointmentManagement
+                    upcomingAppointments={upcomingAppointments}
+                    pastAppointments={pastAppointments}
+                    setUpcomingAppointments={setUpcomingAppointments}
+                    setPastAppointments={setPastAppointments}
+                    token={token}
+                  />
                 </div>
               )}
-
-              {/* Find Doctor Tab */}
-              {activeTab === 'findDoctor' && (
-                <div>
-                  <div className="border-b border-gray-200 mb-6">
-                    <h2 className="text-xl font-semibold text-gray-800 pb-4">Find a Doctor</h2>
-                  </div>
-
-                  <div className="mb-6">
-                    <div className="flex flex-col md:flex-row gap-4">
-                      <div className="flex-1">
-                        <input
-                          type="text"
-                          placeholder="Search by name or specialization"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
-                      </div>
-                      <div className="w-full md:w-48">
-                        <select className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
-                          <option value="">All Specializations</option>
-                          <option value="cardiology">Cardiology</option>
-                          <option value="dermatology">Dermatology</option>
-                          <option value="neurology">Neurology</option>
-                          <option value="pediatrics">Pediatrics</option>
-                          <option value="orthopedics">Orthopedics</option>
-                        </select>
-                      </div>
-                      <div className="w-full md:w-48">
-                        <select className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500">
-                          <option value="">All Locations</option>
-                          <option value="new-york">New York</option>
-                          <option value="los-angeles">Los Angeles</option>
-                          <option value="chicago">Chicago</option>
-                          <option value="houston">Houston</option>
-                          <option value="miami">Miami</option>
-                        </select>
-                      </div>
-                      <button className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700">
-                        Search
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Sample Doctor Cards - in a real app, these would be populated from search results */}
-                    <div className="bg-white rounded-lg shadow p-4 border border-gray-100">
-                      <div className="flex items-start">
-                        <img
-                          className="h-16 w-16 rounded-full mr-4"
-                          src="https://randomuser.me/api/portraits/women/45.jpg"
-                          alt="Dr. Sarah Johnson"
-                        />
-                        <div className="flex-1">
-                          <h3 className="text-lg font-medium">Dr. Sarah Johnson</h3>
-                          <p className="text-sm text-gray-600">Cardiologist</p>
-                          <div className="flex items-center mt-1">
-                            <div className="flex text-yellow-400">
-                              {[...Array(5)].map((_, i) => (
-                                <Star key={i} className="h-4 w-4" fill={i < 4 ? 'currentColor' : 'none'} />
-                              ))}
-                            </div>
-                            <span className="text-xs text-gray-600 ml-1">(128 reviews)</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-1">New York, NY • Available Today</p>
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <Link
-                          to="/doctor/1"
-                          className="text-blue-600 text-sm font-medium hover:text-blue-800"
-                        >
-                          View Profile & Book
-                        </Link>
-                      </div>
-                    </div>
-
-                    <div className="bg-white rounded-lg shadow p-4 border border-gray-100">
-                      <div className="flex items-start">
-                        <img
-                          className="h-16 w-16 rounded-full mr-4"
-                          src="https://randomuser.me/api/portraits/men/32.jpg"
-                          alt="Dr. Michael Chen"
-                        />
-                        <div className="flex-1">
-                          <h3 className="text-lg font-medium">Dr. Michael Chen</h3>
-                          <p className="text-sm text-gray-600">Dermatologist</p>
-                          <div className="flex items-center mt-1">
-                            <div className="flex text-yellow-400">
-                              {[...Array(5)].map((_, i) => (
-                                <Star key={i} className="h-4 w-4" fill={i < 5 ? 'currentColor' : 'none'} />
-                              ))}
-                            </div>
-                            <span className="text-xs text-gray-600 ml-1">(93 reviews)</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-1">Los Angeles, CA • Next Available: Tomorrow</p>
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <Link
-                          to="/doctor/2"
-                          className="text-blue-600 text-sm font-medium hover:text-blue-800"
-                        >
-                          View Profile & Book
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 text-center">
-                    <button className="text-blue-600 text-sm font-medium hover:text-blue-800">
-                      View More Doctors
-                    </button>
-                  </div>
+                <div className="border-b border-gray-200 mb-6">
+                  <h2 className="text-xl font-semibold text-gray-800 pb-4">Your Appointments</h2>
                 </div>
-              )}
 
-              {/* Medical Records Tab */}
               {activeTab === 'medicalRecords' && (
                 <div>
                   <div className="border-b border-gray-200 mb-6">
                     <h2 className="text-xl font-semibold text-gray-800 pb-4">Medical Records</h2>
                   </div>
-
                   <div className="mb-6">
                     <form onSubmit={handleUploadReport} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                       <h3 className="text-md font-medium mb-4">Upload New Report</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="col-span-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Report Title</label>
                           <input
                             type="text"
-                            placeholder="Report Name"
+                            name="title"
+                            required
+                            placeholder="Enter report title"
                             className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
                           />
                         </div>
                         <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Report Type</label>
+                          <select
+                            name="reportType"
+                            required
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">Select type</option>
+                            <option value="lab">Lab Report</option>
+                            <option value="imaging">Imaging Report</option>
+                            <option value="pathology">Pathology Report</option>
+                            <option value="prescription">Prescription</option>
+                            <option value="vaccination">Vaccination Record</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Issue Date</label>
                           <input
                             type="date"
+                            name="issuedDate"
+                            required
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Institution (Optional)</label>
+                          <input
+                            type="text"
+                            name="institution"
+                            placeholder="Enter institution name"
                             className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
                           />
                         </div>
                       </div>
                       <div className="mt-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Select File</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                        <textarea
+                          name="description"
+                          rows="2"
+                          placeholder="Enter report description"
+                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                        ></textarea>
+                      </div>
+                      <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Upload File</label>
                         <div className="flex items-center space-x-4">
                           <label className="flex-1 flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer">
                             <Upload className="mr-2 h-5 w-5 text-gray-400" />
-                            <span>Choose File</span>
-                            <input type="file" className="sr-only" />
+                            <span>{selectedFileName || 'Choose File'}</span>
+                            <input type="file" name="reportFile" required className="sr-only" onChange={handleFileChange} />
                           </label>
                           <button
                             type="submit"
@@ -535,7 +534,6 @@ function PatientDashboard() {
                       </div>
                     </form>
                   </div>
-
                   <div>
                     <h3 className="text-lg font-medium text-gray-700 mb-4">Your Medical Reports</h3>
                     {medicalReports.length === 0 ? (
@@ -546,16 +544,19 @@ function PatientDashboard() {
                           <thead className="bg-gray-50">
                             <tr>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Name
-                              </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Date
+                                Title
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Type
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Size
+                                Institution
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Issue Date
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                File Size
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Actions
@@ -564,25 +565,49 @@ function PatientDashboard() {
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
                             {medicalReports.map((report) => (
-                              <tr key={report.id}>
+                              <tr key={report._id}>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-gray-900">{report.name}</div>
+                                  <div className="text-sm font-medium text-gray-900">{report.title}</div>
+                                  {report.description && (
+                                    <div className="text-sm text-gray-500">{report.description}</div>
+                                  )}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm text-gray-500">{report.date}</div>
+                                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                    {report.reportType.charAt(0).toUpperCase() + report.reportType.slice(1)}
+                                  </span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm text-gray-500">{report.type}</div>
+                                  <div className="text-sm text-gray-500">{report.institution || '-'}</div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm text-gray-500">{report.size}</div>
+                                  <div className="text-sm text-gray-500">
+                                    {new Date(report.issuedDate).toLocaleDateString()}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-sm text-gray-500">
+                                    {(report.fileSize / 1024 / 1024).toFixed(2)} MB
+                                  </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                  <button className="text-blue-600 hover:text-blue-900 mr-4">
+                                  <a
+                                    href="#"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      downloadReport(report._id, token);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-900 mr-4 inline-block"
+                                    title="Download Report"
+                                  >
                                     <Download className="h-5 w-5" />
-                                  </button>
-                                  <button className="text-red-600 hover:text-red-900">
-                                    Delete
+                                  </a>
+                                  <button
+                                    onClick={() => handleDeleteReport(report._id)}
+                                    className="text-red-600 hover:text-red-900 inline-block"
+                                    title="Delete Report"
+                                  >
+                                    <Trash2 className="h-5 w-5" />
                                   </button>
                                 </td>
                               </tr>
@@ -595,178 +620,409 @@ function PatientDashboard() {
                 </div>
               )}
 
-              {/* Prescriptions Tab */}
               {activeTab === 'prescriptions' && (
+                <PatientPrescriptionManagement />
+              )}
+              {activeTab === 'reports' && (
                 <div>
                   <div className="border-b border-gray-200 mb-6">
-                    <h2 className="text-xl font-semibold text-gray-800 pb-4">Prescriptions</h2>
+                    <h2 className="text-xl font-semibold text-gray-800 pb-4">Medical Reports</h2>
                   </div>
-
-                  {prescriptions.length === 0 ? (
-                    <p className="text-gray-500">You have no prescriptions.</p>
-                  ) : (
-                    <div className="space-y-6">
-                      {prescriptions.map((prescription) => (
-                        <div key={prescription.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                          <div className="bg-blue-50 px-4 py-3 border-b border-gray-200">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <h3 className="text-md font-medium text-gray-800">Prescription from {prescription.doctorName}</h3>
-                                <p className="text-sm text-gray-600">Date: {prescription.date}</p>
-                              </div>
-                              <button className="inline-flex items-center text-blue-600 hover:text-blue-800">
-                                <Download className="h-5 w-5 mr-1" />
-                                Download
-                              </button>
-                            </div>
-                          </div>
-                          <div className="p-4">
-                            <h4 className="text-sm font-medium text-gray-700 mb-2">Medications</h4>
-                            <div className="space-y-3">
-                              {prescription.medications.map((medication, index) => (
-                                <div key={index} className="bg-gray-50 p-3 rounded border border-gray-200">
-                                  <p className="text-sm font-medium text-gray-800">{medication.name} ({medication.dosage})</p>
-                                  <p className="text-xs text-gray-600">Frequency: {medication.frequency}</p>
-                                  <p className="text-xs text-gray-600">Duration: {medication.duration}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                  <div className="mb-6">
+                    <form onSubmit={handleUploadReport} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                      <h3 className="text-md font-medium mb-4">Upload New Report</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Report Title</label>
+                          <input
+                            type="text"
+                            name="title"
+                            required
+                            placeholder="Enter report title"
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Report Type</label>
+                          <select
+                            name="reportType"
+                            required
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">Select type</option>
+                            <option value="lab">Lab Report</option>
+                            <option value="imaging">Imaging Report</option>
+                            <option value="pathology">Pathology Report</option>
+                            <option value="prescription">Prescription</option>
+                            <option value="vaccination">Vaccination Record</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Issue Date</label>
+                          <input
+                            type="date"
+                            name="issuedDate"
+                            required
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Institution (Optional)</label>
+                          <input
+                            type="text"
+                            name="institution"
+                            placeholder="Enter institution name"
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                        <textarea
+                          name="description"
+                          rows="2"
+                          placeholder="Enter report description"
+                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                        ></textarea>
+                      </div>
+                      <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Upload File</label>
+                        <div className="flex items-center space-x-4">
+                          <label className="flex-1 flex items-center justify-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer">
+                            <Upload className="mr-2 h-5 w-5 text-gray-400" />
+                            <span>{selectedFileName || 'Choose File'}</span>
+                            <input type="file" name="reportFile" required className="sr-only" onChange={handleFileChange} />
+                          </label>
+                          <button
+                            type="submit"
+                            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                          >
+                            Upload
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-medium text-gray-700 mb-4">Your Medical Reports</h3>
+                    {medicalReports.length === 0 ? (
+                      <p className="text-gray-500">You have no uploaded medical reports.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Title
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Type
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Institution
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Issue Date
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                File Size
+                              </th>
+                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Actions
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {medicalReports.map((report) => (
+                              <tr key={report._id}>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-sm font-medium text-gray-900">{report.title}</div>
+                                  {report.description && (
+                                    <div className="text-sm text-gray-500">{report.description}</div>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                    {report.reportType.charAt(0).toUpperCase() + report.reportType.slice(1)}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-sm text-gray-500">{report.institution || '-'}</div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-sm text-gray-500">
+                                    {new Date(report.issuedDate).toLocaleDateString()}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="text-sm text-gray-500">
+                                    {(report.fileSize / 1024 / 1024).toFixed(2)} MB
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                  <a
+                                    href="#"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      downloadReport(report._id, token);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-900 mr-4 inline-block"
+                                    title="Download Report"
+                                  >
+                                    <Download className="h-5 w-5" />
+                                  </a>
+                                  <button
+                                    onClick={() => handleDeleteReport(report._id)}
+                                    className="text-red-600 hover:text-red-900 inline-block"
+                                    title="Delete Report"
+                                  >
+                                    <Trash2 className="h-5 w-5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
-
-              {/* Profile Tab */}
               {activeTab === 'profile' && (
                 <div>
                   <div className="border-b border-gray-200 mb-6">
                     <h2 className="text-xl font-semibold text-gray-800 pb-4">Your Profile</h2>
                   </div>
-
                   <div className="flex flex-col md:flex-row md:items-center mb-6">
                     <div className="flex-shrink-0 mb-4 md:mb-0 md:mr-6">
                       <div className="relative">
                         <img 
-                          src="https://randomuser.me/api/portraits/men/75.jpg" 
+                          src={profileFormData.profileImage || user.profileImage || 'https://randomuser.me/api/portraits/men/75.jpg'} 
                           className="h-24 w-24 rounded-full object-cover"
                           alt="Profile"
+                          onError={(e) => e.target.src = 'https://randomuser.me/api/portraits/men/75.jpg'}
                         />
-                        <label className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 cursor-pointer">
+                        <label className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 cursor-pointer hover:bg-blue-700 transition-colors">
                           <Upload className="h-4 w-4" />
-                          <input type="file" className="sr-only" />
+                          <input 
+                            type="file" 
+                            className="sr-only" 
+                            accept="image/*"
+                            onChange={handleProfileImageChange}
+                          />
                         </label>
                       </div>
                     </div>
                     <div>
                       <h3 className="text-lg font-medium">{user.name}</h3>
                       <p className="text-gray-600">{user.email}</p>
+                      <p className="text-sm text-gray-500 mt-1">{patientProfile?.role || 'Patient'}</p>
                     </div>
                   </div>
-
-                  <form className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {loading ? (
+                    <div className="flex justify-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                    </div>
+                  ) : (
+                    <form className="space-y-6" onSubmit={(e) => {
+                      e.preventDefault();
+                      handleUpdateProfile();
+                    }}>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                          <input 
+                            type="text" 
+                            name="name"
+                            value={profileFormData.name}
+                            onChange={handleProfileInputChange}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                            disabled={true} // Name is managed by User model
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                          <input 
+                            type="email" 
+                            value={user.email}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                            disabled={true} // Email is managed by User model
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                          <input 
+                            type="tel" 
+                            name="phoneNumber"
+                            value={profileFormData.phoneNumber}
+                            onChange={handleProfileInputChange}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+                          <input 
+                            type="date" 
+                            name="dateOfBirth"
+                            value={profileFormData.dateOfBirth}
+                            onChange={handleProfileInputChange}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                          <select
+                            name="gender"
+                            value={profileFormData.gender}
+                            onChange={handleProfileInputChange}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">Select gender</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group</label>
+                          <select
+                            name="bloodGroup"
+                            value={profileFormData.bloodGroup || ''}
+                            onChange={handleProfileInputChange}
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">Select blood group</option>
+                            <option value="A+">A+</option>
+                            <option value="A-">A-</option>
+                            <option value="B+">B+</option>
+                            <option value="B-">B-</option>
+                            <option value="AB+">AB+</option>
+                            <option value="AB-">AB-</option>
+                            <option value="O+">O+</option>
+                            <option value="O-">O-</option>
+                          </select>
+                        </div>
+                      </div>
+                      
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
                         <input 
                           type="text" 
-                          defaultValue={user.name}
+                          name="address"
+                          value={profileFormData.address}
+                          onChange={handleProfileInputChange}
                           className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
                         />
                       </div>
+                      
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
-                        <input 
-                          type="email" 
-                          defaultValue={user.email}
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Medical History</label>
+                        <textarea 
+                          rows="4" 
+                          name="medicalHistory"
+                          value={profileFormData.medicalHistory}
+                          onChange={handleProfileInputChange}
                           className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
+                          placeholder="Enter your medical history"
+                        ></textarea>
                       </div>
+                      
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-                        <input 
-                          type="tel" 
-                          defaultValue="(555) 123-4567"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Allergies</label>
+                        <div className="flex items-center space-x-2">
+                          <input 
+                            type="text" 
+                            name="newAllergy"
+                            value={profileFormData.newAllergy || ''}
+                            onChange={handleProfileInputChange}
+                            className="flex-1 p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="Add an allergy"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddAllergy}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                          >
+                            Add
+                          </button>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {profileFormData.allergies.map((allergy, index) => (
+                            <div key={index} className="bg-gray-100 px-3 py-1 rounded-full flex items-center">
+                              <span>{allergy}</span>
+                              <button 
+                                type="button" 
+                                onClick={() => handleRemoveAllergy(index)}
+                                className="ml-2 text-red-500 hover:text-red-700"
+                              >
+                                &times;
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
+                      
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
-                        <input 
-                          type="date" 
-                          defaultValue="1985-05-15"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Emergency Contact</label>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <input 
+                              type="text" 
+                              name="emergencyContactName"
+                              value={profileFormData.emergencyContact.name}
+                              onChange={handleEmergencyContactChange}
+                              className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="Contact Name"
+                            />
+                          </div>
+                          <div>
+                            <input 
+                              type="text" 
+                              name="emergencyContactRelationship"
+                              value={profileFormData.emergencyContact.relationship}
+                              onChange={handleEmergencyContactChange}
+                              className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="Relationship"
+                            />
+                          </div>
+                          <div>
+                            <input 
+                              type="tel" 
+                              name="emergencyContactPhoneNumber"
+                              value={profileFormData.emergencyContact.phoneNumber}
+                              onChange={handleEmergencyContactChange}
+                              className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                              placeholder="Phone Number"
+                            />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                      <input 
-                        type="text" 
-                        defaultValue="123 Main St"
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 mb-2"
-                      />
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        <input 
-                          type="text" 
-                          defaultValue="New York"
-                          placeholder="City"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
-                        <input 
-                          type="text" 
-                          defaultValue="NY"
-                          placeholder="State"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
-                        <input 
-                          type="text" 
-                          defaultValue="10001"
-                          placeholder="Zip Code"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
+                      
+                      <div className="flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={isUpdatingProfile}
+                          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
+                        >
+                          {isUpdatingProfile ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              <Save className="mr-2 h-4 w-4" />
+                              Save Changes
+                            </>
+                          )}
+                        </button>
                       </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Medical History (Optional)</label>
-                      <textarea 
-                        rows="4" 
-                        defaultValue="No significant medical history."
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                      ></textarea>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Insurance Information (Optional)</label>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="Insurance Provider"
-                          defaultValue="HealthPlus"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
-                        <input 
-                          type="text" 
-                          placeholder="Policy Number"
-                          defaultValue="HP12345678"
-                          className="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end">
-                      <button
-                        type="submit"
-                        className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
-                      >
-                        Save Changes
-                      </button>
-                    </div>
-                  </form>
+                    </form>
+                  )}
                 </div>
               )}
             </div>
