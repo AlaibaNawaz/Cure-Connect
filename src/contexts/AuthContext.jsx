@@ -1,132 +1,82 @@
-
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '../components/ui/use-toast';
+import * as api from '../services/api';
 
 // Create auth context
 const AuthContext = createContext();
 
-// Mock users for demo purposes
-const mockUsers = {
-  patients: [
-    { id: 'p1', email: 'patient@example.com', password: 'patient123', name: 'John Doe', type: 'patient' },
-    { id: 'p2', email: 'patient2@example.com', password: 'patient123', name: 'Jane Smith', type: 'patient' }
-  ],
-  doctors: [
-    { 
-      id: 'd1', 
-      email: 'doctor@example.com', 
-      password: 'doctor123', 
-      name: 'Dr. Sarah Johnson', 
-      type: 'doctor',
-      specialization: 'Cardiologist',
-      location: 'New York',
-      rating: 4.9,
-      image: "https://randomuser.me/api/portraits/women/45.jpg",
-      available: true
-    },
-    { 
-      id: 'd2', 
-      email: 'doctor2@example.com', 
-      password: 'doctor123', 
-      name: 'Dr. Michael Chen', 
-      type: 'doctor',
-      specialization: 'Dermatologist',
-      location: 'Los Angeles',
-      rating: 4.8,
-      image: "https://randomuser.me/api/portraits/men/32.jpg",
-      available: true
-    }
-  ],
-  admins: [
-    { id: 'a1', email: 'admin@example.com', password: 'admin123', name: 'Admin User', type: 'admin' }
-  ]
-};
-
-// Mock appointments
-const mockAppointments = [
-  {
-    id: 'app1',
-    doctorId: 'd1',
-    patientId: 'p1',
-    patientName: 'John Doe',
-    date: '2023-07-15',
-    time: '10:00 AM',
-    status: 'confirmed',
-    symptoms: 'Chest pain and shortness of breath',
-    notes: '',
-    completed: false
-  },
-  {
-    id: 'app2',
-    doctorId: 'd1',
-    patientId: 'p2',
-    patientName: 'Jane Smith',
-    date: '2023-07-16',
-    time: '11:30 AM',
-    status: 'pending',
-    symptoms: 'Regular checkup',
-    notes: '',
-    completed: false
-  }
-];
-
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [appointments, setAppointments] = useState(mockAppointments);
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [doctors, setDoctors] = useState(mockUsers.doctors);
-  const [patients, setPatients] = useState(mockUsers.patients);
+  const [doctors, setDoctors] = useState([]);
   
   const navigate = useNavigate();
 
-  // Check for a saved user in localStorage on initial load
+  // Load user data and token on initial load
   useEffect(() => {
-    const savedUser = localStorage.getItem('mediConnectUser');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
+    const loadUser = async () => {
+      try {
+        if (token) {
+          const { user: currentUser } = await api.getCurrentUser(token);
+          setUser(currentUser);
+          // Redirect based on user type on initial load
+          switch(currentUser.role) {
+            case 'patient':
+              navigate('/patient-dashboard');
+              break;
+            case 'doctor':
+              navigate('/doctor-dashboard');
+              break;
+            case 'admin':
+              navigate('/admin-dashboard');
+              break;
+            default:
+              navigate('/');
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load user:', error);
+        setToken(null);
+        localStorage.removeItem('token');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadUser();
+  }, [token]);
+
+  // Load doctors on initial load
+  useEffect(() => {
+    const loadDoctors = async () => {
+      try {
+        const doctorsData = await api.getAllDoctors();
+        setDoctors(doctorsData);
+      } catch (error) {
+        console.error('Failed to load doctors:', error);
+      }
+    };
+    loadDoctors();
   }, []);
 
-  // Save user to localStorage whenever it changes
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem('mediConnectUser', JSON.stringify(user));
-    } else {
-      localStorage.removeItem('mediConnectUser');
-    }
-  }, [user]);
+  // Remove the loadAppointments effect since it's handled in the dashboard components
 
-  const login = (email, password, userType) => {
-    let userArray;
-    
-    switch(userType) {
-      case 'patient':
-        userArray = mockUsers.patients;
-        break;
-      case 'doctor':
-        userArray = mockUsers.doctors;
-        break;
-      case 'admin':
-        userArray = mockUsers.admins;
-        break;
-      default:
-        userArray = [];
-    }
-    
-    const foundUser = userArray.find(
-      u => u.email === email && u.password === password
-    );
-    
-    if (foundUser) {
-      const userWithoutPassword = { ...foundUser };
-      delete userWithoutPassword.password;
+  const login = async (email, password, userType) => {
+    try {
+      const { token: newToken, user: userData } = await api.loginUser(email, password);
+      // Check if user is inactive
+      if (userData.status === 'inactive') {
+        throw new Error('Your account is inactive. Please contact support.');
+      }
       
-      setUser(userWithoutPassword);
+      setToken(newToken);
+      localStorage.setItem('token', newToken);
+      setUser(userData);
       
       // Redirect based on user type
-      switch(userType) {
+      switch(userData.role) {
         case 'patient':
           navigate('/patient-dashboard');
           break;
@@ -142,14 +92,14 @@ export const AuthProvider = ({ children }) => {
       
       toast({
         title: "Login Successful",
-        description: `Welcome back, ${foundUser.name}!`,
+        description: `Welcome back, ${userData.name}!`,
       });
       
       return true;
-    } else {
+    } catch (error) {
       toast({
         title: "Login Failed",
-        description: "Invalid email or password",
+        description: error.message,
         variant: "destructive",
       });
       
@@ -159,62 +109,99 @@ export const AuthProvider = ({ children }) => {
 
   const logout = () => {
     setUser(null);
-    navigate('/');  // Changed from '/login' to '/' to redirect to home page
+    setToken(null);
+    setAppointments([]);
+    localStorage.removeItem('token');
+    navigate('/');
     toast({
       title: "Logged Out",
       description: "You have been logged out successfully",
     });
   };
 
-  const register = (userData, userType) => {
-    // Check if email already exists
-    const allUsers = [...mockUsers.patients, ...mockUsers.doctors, ...mockUsers.admins];
-    const emailExists = allUsers.some(u => u.email === userData.email);
-    
-    if (emailExists) {
+  const updateAppointmentStatus = async (appointmentId, status) => {
+    try {
+      const updatedAppointment = await api.updateAppointmentStatus(appointmentId, status, token);
+      setAppointments(prev => prev.map(app => 
+        app._id === appointmentId ? updatedAppointment : app
+      ));
       toast({
-        title: "Registration Failed",
-        description: "Email already in use",
+        title: "Appointment Updated",
+        description: `Appointment status changed to ${status}`,
+      });
+      return true;
+    } catch (error) {
+      toast({
+        title: "Update Failed",
+        description: error.message,
         variant: "destructive",
       });
       return false;
     }
-    
-    const newUser = {
-      ...userData,
-      id: `${userType[0]}${Date.now()}`, // Generate a simple ID
-      type: userType
-    };
-    
-    // Add the new user to the appropriate array
-    if (userType === 'patient') {
-      setPatients(prev => [...prev, newUser]);
-    } else if (userType === 'doctor') {
-      setDoctors(prev => [...prev, newUser]);
-    }
-    
-    toast({
-      title: "Registration Successful",
-      description: "Your account has been created successfully",
-    });
-    
-    // Login the user after registration
-    const userWithoutPassword = { ...newUser };
-    delete userWithoutPassword.password;
-    setUser(userWithoutPassword);
-    
-    // Redirect based on user type
-    if (userType === 'patient') {
-      navigate('/patient-dashboard');
-    } else if (userType === 'doctor') {
-      navigate('/doctor-dashboard');
-    }
-    
-    return true;
   };
 
-  // Function to add new appointment
+  const createAppointment = async (appointmentData) => {
+    try {
+      const response = await api.createAppointment(appointmentData, token);
+      console.log('Appointment payload:', appointmentData);
+      console.log('Create appointment response:', response);
+      const newAppointment = response.data; // Handle nested data
+      setAppointments(prev => [...prev, newAppointment]);
+      toast({
+        title: "Appointment Created",
+        description: "Your appointment has been scheduled successfully",
+      });
+      return true;
+    } catch (error) {
+      console.error('Create appointment error:', error);
+      toast({
+        title: "Booking Failed",
+        description: error.message || "An unexpected error occurred. Please try again.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  const register = async (userData, userType) => {
+    try {
+      // Call the API to register the user
+      const response = await api.registerUser(userData, userType);
+
+      // For doctors, registration requires admin approval, so don't log them in automatically.
+      if (userType === 'doctor') {
+        toast({
+          title: "Registration Submitted",
+          description: "Your registration is submitted and pending admin approval.",
+        });
+        return { success: true, requiresApproval: true }; // Indicate success but requires approval
+      }
+
+      // For other user types (e.g., patient), log them in directly.
+      const { token: newToken, user: newUser } = response; 
+      setToken(newToken);
+      localStorage.setItem('token', newToken);
+      setUser(newUser);
+
+      toast({
+        title: "Registration Successful",
+        description: "Your account has been created successfully",
+      });
+
+      return { success: true, requiresApproval: false }; // Indicate success and immediate login
+    } catch (error) {
+      toast({
+        title: "Registration Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  // Legacy function - use createAppointment instead for real API integration
   const addAppointment = (appointmentData) => {
+    console.warn('Using deprecated addAppointment function. Use createAppointment for API integration.');
     const newAppointment = {
       id: `app${Date.now()}`,
       ...appointmentData,
@@ -232,93 +219,122 @@ export const AuthProvider = ({ children }) => {
     return newAppointment;
   };
 
-  // Function to update appointment status
-  const updateAppointmentStatus = (appointmentId, newStatus) => {
-    setAppointments(prev => 
-      prev.map(app => 
-        app.id === appointmentId ? { ...app, status: newStatus } : app
-      )
-    );
-    
-    toast({
-      title: "Appointment Updated",
-      description: `Appointment status changed to ${newStatus}`,
-    });
-  };
-
   // Function to mark appointment as completed
-  const completeAppointment = (appointmentId) => {
-    setAppointments(prev => 
-      prev.map(app => 
-        app.id === appointmentId ? { ...app, completed: true } : app
-      )
-    );
-    
-    toast({
-      title: "Appointment Completed",
-      description: "The appointment has been marked as completed",
-    });
+  const completeAppointment = async (appointmentId) => {
+    try {
+      // Check if doctor is suspended
+      if (user.role === 'doctor' && user.status === 'suspended') {
+        toast({
+          title: "Action Denied",
+          description: "Your account is suspended. You cannot perform this action.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      
+      const updatedAppointment = await api.completeAppointment(appointmentId, token);
+      
+      setAppointments(prev => prev.map(app => 
+        app._id === appointmentId ? updatedAppointment : app
+      ));
+      
+      toast({
+        title: "Appointment Completed",
+        description: "The appointment has been marked as completed",
+      });
+      
+      return true;
+    } catch (error) {
+      toast({
+        title: "Action Failed",
+        description: error.message || "Failed to complete the appointment",
+        variant: "destructive",
+      });
+      return false;
+    }
   };
   
-  // Get user's appointments (for doctors or patients)
-  const getUserAppointments = () => {
-    if (!user) return [];
+  const getUserAppointments = async () => {
+    if (!user || !token) return [];
     
-    return appointments.filter(app => {
-      if (user.type === 'doctor') {
-        return app.doctorId === user.id;
-      } else if (user.type === 'patient') {
-        return app.patientId === user.id;
-      } else if (user.type === 'admin') {
-        return true; // Admins can see all appointments
-      }
-      return false;
-    });
+    try {
+      const appointmentsData = await api.getAppointments(token);
+      return Array.isArray(appointmentsData) ? appointmentsData : [];
+    } catch (error) {
+      console.error('Failed to fetch appointments:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load appointments",
+        variant: "destructive",
+      });
+      return [];
+    }
   };
 
   // Update user profile
-  const updateUserProfile = (userData) => {
+  const updateUserProfile = async (userData) => {
     if (!user) return false;
     
-    const updatedUser = { ...user, ...userData };
-    setUser(updatedUser);
-    
-    // Also update in the appropriate array
-    if (user.type === 'patient') {
-      setPatients(prev => 
-        prev.map(p => p.id === user.id ? { ...p, ...userData } : p)
-      );
-    } else if (user.type === 'doctor') {
-      setDoctors(prev => 
-        prev.map(d => d.id === user.id ? { ...d, ...userData } : d)
-      );
+    try {
+      // Call the appropriate API based on user role
+      let updatedUserData;
+      if (user.role === 'patient') {
+        updatedUserData = await api.updatePatient(user._id, userData, token);
+      } else if (user.role === 'doctor') {
+        updatedUserData = await api.updateDoctor(user._id, userData, token);
+      } else {
+        throw new Error('Invalid user role for profile update');
+      }
+      
+      // Update local state
+      const updatedUser = { ...user, ...updatedUserData };
+      setUser(updatedUser);
+      
+      // Update in doctors array if needed
+      if (user.role === 'doctor') {
+        setDoctors(prev => 
+          prev.map(d => d._id === user._id ? { ...d, ...updatedUserData } : d)
+        );
+      }
+      
+      toast({
+        title: "Profile Updated",
+        description: "Your profile has been updated successfully",
+      });
+      
+      return true;
+    } catch (error) {
+      toast({
+        title: "Update Failed",
+        description: error.message || 'Failed to update profile',
+        variant: "destructive",
+      });
+      return false;
     }
-    
-    toast({
-      title: "Profile Updated",
-      description: "Your profile has been updated successfully",
-    });
-    
-    return true;
   };
 
-  const value = {
-    user,
-    login,
-    logout,
-    register,
-    loading,
-    doctors,
-    patients,
-    appointments,
-    addAppointment,
-    updateAppointmentStatus,
-    completeAppointment,
-    getUserAppointments,
-    updateUserProfile
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        register,
+        loading,
+        doctors,
+        appointments,
+        token,
+        createAppointment,
+        updateAppointmentStatus,
+        completeAppointment,
+        getUserAppointments,
+        updateUserProfile,
+        addAppointment // Keep for backward compatibility
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export const useAuth = () => useContext(AuthContext);
