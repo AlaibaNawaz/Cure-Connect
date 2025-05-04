@@ -1,18 +1,53 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Calendar, Clock, User, FileText, ArrowLeft, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from '../components/ui/use-toast';
+import * as api from '../services/api';
 
 function AppointmentBooking() {
   const { doctorId } = useParams();
   const navigate = useNavigate();
-  const { user, doctors, addAppointment } = useAuth();
-  
-  // Find the doctor by ID
-  const doctor = doctors.find(d => d.id === doctorId);
-  
+  const { user, token, createAppointment } = useAuth();
+  const [doctor, setDoctor] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch doctor data by ID
+  useEffect(() => {
+    const fetchDoctor = async () => {
+      try {
+        setLoading(true);
+        const doctorData = await api.getDoctorById(doctorId);
+        setDoctor(doctorData);
+        
+        // Check if doctor is suspended
+        if (doctorData.status === 'suspended') {
+          toast({
+            title: "Doctor Unavailable",
+            description: "This doctor is currently unavailable for appointments",
+            variant: "destructive",
+          });
+          navigate('/doctor-list', { 
+            state: { message: 'The selected doctor is currently unavailable. Please choose another doctor.' }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch doctor:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load doctor information",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (doctorId) {
+      fetchDoctor();
+    }
+  }, [doctorId]);
+
   // Form state
   const [appointmentData, setAppointmentData] = useState({
     date: '',
@@ -20,29 +55,28 @@ function AppointmentBooking() {
     symptoms: '',
     notes: ''
   });
-  
-  // Generate available dates (next 7 days)
+
+  // Generate available dates (next 14 days)
   const generateAvailableDates = () => {
     const dates = [];
     const today = new Date();
-    
+
     for (let i = 1; i <= 14; i++) {
       const date = new Date();
       date.setDate(today.getDate() + i);
-      
-      // Only include dates that match doctor's available days
+
       const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
       if (!doctor.availableDays || doctor.availableDays.includes(dayName)) {
         const formattedDate = date.toISOString().split('T')[0];
         dates.push({ value: formattedDate, label: dayName + ', ' + date.toLocaleDateString() });
       }
     }
-    
+
     return dates;
   };
-  
-  const availableDates = generateAvailableDates();
-  
+
+  const availableDates = doctor ? generateAvailableDates() : [];
+
   // Handle form change
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -51,11 +85,11 @@ function AppointmentBooking() {
       [name]: value
     });
   };
-  
+
   // Handle form submission
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!appointmentData.date || !appointmentData.time) {
       toast({
         title: "Validation Error",
@@ -64,27 +98,52 @@ function AppointmentBooking() {
       });
       return;
     }
-    
-    // Add appointment
-    const newAppointment = addAppointment({
-      doctorId: doctor.id,
-      doctorName: doctor.name,
-      patientId: user.id,
-      patientName: user.name,
-      date: appointmentData.date,
-      time: appointmentData.time,
-      symptoms: appointmentData.symptoms,
-      notes: appointmentData.notes
-    });
-    
-    // Navigate to appointments page
-    navigate('/appointments', { 
-      state: { 
-        message: 'Appointment booked successfully. The doctor will review your request shortly.' 
+
+    try {
+      const appointmentPayload = {
+        doctorId: doctor._id,
+        doctorName: doctor.name,
+        patientId: user._id,
+        patientName: user.name,
+        date: new Date(appointmentData.date).toISOString(), // Convert to ISO string
+        time: appointmentData.time,
+        symptoms: appointmentData.symptoms,
+        notes: appointmentData.notes || ''
+      };
+
+      console.log('Submitting appointment payload:', appointmentPayload);
+
+      const success = await createAppointment(appointmentPayload);
+
+      if (success) {
+        navigate('/patient-dashboard', {
+          state: {
+            message: 'Appointment booked successfully. The doctor will review your request shortly.'
+          }
+        });
       }
-    });
+    } catch (error) {
+      console.error('Failed to book appointment:', error);
+      toast({
+        title: "Booking Failed",
+        description: error.message || "Failed to book appointment. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
-  
+
+  // If loading, show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center p-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading doctor information...</p>
+        </div>
+      </div>
+    );
+  }
+
   // If doctor not found, show error
   if (!doctor) {
     return (
@@ -100,9 +159,9 @@ function AppointmentBooking() {
       </div>
     );
   }
-  
+
   // If user not logged in or not a patient, redirect to login
-  if (!user || user.type !== 'patient') {
+  if (!user || user.role !== 'patient') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center p-8 bg-white rounded-lg shadow-md">
@@ -116,14 +175,14 @@ function AppointmentBooking() {
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white shadow-sm">
         <div className="container mx-auto px-4 py-4">
-          <button 
-            onClick={() => navigate(-1)} 
+          <button
+            onClick={() => navigate(-1)}
             className="flex items-center text-gray-600 hover:text-blue-600"
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
@@ -131,19 +190,19 @@ function AppointmentBooking() {
           </button>
         </div>
       </div>
-      
+
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-2xl font-bold text-gray-900 mb-6">Book an Appointment</h1>
-          
+
           {/* Doctor Info */}
           <div className="bg-white rounded-lg shadow-sm p-4 mb-6 flex items-center">
             <div className="flex-shrink-0 mr-4">
               <div className="w-16 h-16 rounded-full overflow-hidden">
-                {doctor.image ? (
-                  <img 
-                    src={doctor.image} 
-                    alt={doctor.name} 
+                {doctor.profileImage ? (
+                  <img
+                    src={`http://localhost:5000${doctor.profileImage}`}
+                    alt={doctor.name}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -153,7 +212,7 @@ function AppointmentBooking() {
                 )}
               </div>
             </div>
-            
+
             <div>
               <h2 className="text-lg font-semibold">{doctor.name}</h2>
               <p className="text-gray-600">{doctor.specialization}</p>
@@ -163,11 +222,11 @@ function AppointmentBooking() {
               </div>
             </div>
           </div>
-          
+
           {/* Appointment Form */}
           <div className="bg-white rounded-lg shadow-sm p-6">
             <h2 className="text-lg font-semibold mb-4">Appointment Details</h2>
-            
+
             <form onSubmit={handleSubmit}>
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -200,7 +259,7 @@ function AppointmentBooking() {
                       </select>
                     </div>
                   </div>
-                  
+
                   <div>
                     <label htmlFor="time" className="block text-sm font-medium text-gray-700 mb-1">
                       Select Time
@@ -239,7 +298,7 @@ function AppointmentBooking() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div>
                   <label htmlFor="symptoms" className="block text-sm font-medium text-gray-700 mb-1">
                     Reason for Visit / Symptoms
@@ -255,7 +314,7 @@ function AppointmentBooking() {
                     placeholder="Please describe your symptoms or reason for consultation..."
                   ></textarea>
                 </div>
-                
+
                 <div>
                   <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">
                     Additional Notes (Optional)
@@ -270,7 +329,7 @@ function AppointmentBooking() {
                     placeholder="Any additional information the doctor should know..."
                   ></textarea>
                 </div>
-                
+
                 <div className="bg-blue-50 p-4 rounded-md">
                   <h3 className="text-sm font-medium text-blue-800 mb-2">Appointment Details</h3>
                   <ul className="text-sm text-blue-700 space-y-1">
@@ -280,7 +339,7 @@ function AppointmentBooking() {
                     <li>• You can cancel or reschedule up to 24 hours before the appointment</li>
                   </ul>
                 </div>
-                
+
                 <div className="flex justify-end space-x-3">
                   <button
                     type="button"
